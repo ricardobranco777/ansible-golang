@@ -1,0 +1,104 @@
+---
+- name: Install Golang from upstream
+  hosts: all
+  tasks:
+
+  # go env GOARCH
+  # This has to be done on shell because ansible_architecture can't be trusted.
+  - name: Detect architecture
+    shell: |
+      arch=$(uname -m)
+      case "$arch" in
+        aarch64) echo "arm64" ;;
+        earmv[67]hf) echo "arm" ;;
+        i[34567]86|pentium) echo "386" ;;
+        i86pc|x86_64) echo "amd64" ;;
+        loongarch64) echo "loong64" ;;
+        *) echo "$arch" ;;
+      esac
+    args:
+      executable: /bin/sh
+    register: system_architecture
+    changed_when: false
+    check_mode: no
+
+  # go env GOOS
+  - name: Detect operating system
+    shell: |
+      os=$(uname -s)
+      case "$os" in
+        SunOS) echo $(uname -o) ;;
+        *) echo "$os" ;;
+      esac
+    args:
+      executable: /bin/sh
+    register: operating_system
+    changed_when: false
+    check_mode: no
+
+  - name: Check pkgsrc
+    stat:
+      path: /usr/pkg
+    register: usr_pkg_exists
+
+  - name: Set /usr/pkg as local base
+    set_fact:
+      base_dir: "/usr/pkg"
+    when: usr_pkg_exists.stat.exists
+
+  - name: Set /usr/local as local base
+    set_fact:
+      base_dir: "/usr/local"
+    when: not usr_pkg_exists.stat.exists
+
+  - name: Get latest Go version
+    shell: "curl -s https://go.dev/VERSION?m=text | awk 'NR == 1 { print $1 }'"
+    args:
+      executable: /bin/sh
+    register: latest_go_version
+    changed_when: false
+
+  - name: Check if Go is installed
+    stat:
+      path: "{{ base_dir }}/go/bin/go"
+    register: go_installed
+
+  - name: Check current Go version
+    when: go_installed.stat.exists
+    shell: "{{ base_dir }}/go/bin/go env GOVERSION"
+    args:
+      executable: /bin/sh
+    register: current_go_version
+    ignore_errors: yes
+    changed_when: false
+
+  - name: Remove existing Go installation if versions differ
+    file:
+      path: "{{ base_dir }}/go"
+      state: absent
+    when: go_installed.stat.exists and current_go_version.stdout != latest_go_version.stdout
+
+  - name: Download and install the latest Go version
+    shell: |
+      curl -sL https://go.dev/dl/{{ latest_go_version.stdout }}.{{ operating_system.stdout | lower }}-{{ system_architecture.stdout }}.tar.gz | tar -zxpf - -C {{ base_dir }}
+    args:
+      executable: /bin/sh
+    when: not go_installed.stat.exists or go_installed.stat.islnk or go_installed.stat.exists and current_go_version.stdout != latest_go_version.stdout
+
+  - name: Create /etc/profile.d
+    file:
+      path: /etc/profile.d
+      state: directory
+      owner: root
+      mode: '0755'
+
+  - name: Create /etc/profile.d/golang.sh
+    copy:
+      dest: /etc/profile.d/golang.sh
+      content: |
+        export GOROOT={{ base_dir }}/go
+        export PATH=$PATH:$GOROOT/bin
+        export GOPROXY=direct
+      owner: root
+      group: root
+      mode: 0755
