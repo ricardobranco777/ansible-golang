@@ -1,5 +1,5 @@
 
-Install latest Golang from upstream on Linux, BSD, Illumos, Solaris, etc.
+Install latest Golang from upstream on Linux, BSD, Illumos, Solaris, MacOS X, etc.
 
 Check:
 `ansible-playbook -v -C -i inventory.yml main.yml`
